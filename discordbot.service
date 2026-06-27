@@ -1,0 +1,14 @@
+[Unit]
+Description=Discord Music Bot
+After=network.target
+
+[Service]
+Type=simple
+User=fahad
+WorkingDirectory=/home/fahad/DiscordBot
+ExecStart=/home/fahad/DiscordBot/venv/bin/python bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
