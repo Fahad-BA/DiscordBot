@@ -7,7 +7,7 @@ lavalink:
     - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.1"
       repository: "https://maven.lavalink.dev/releases"
   server:
-    password: "youshallnotpass"
+    password: "213325@Fx9"
     sources:
       youtube: false
       bandcamp: true
