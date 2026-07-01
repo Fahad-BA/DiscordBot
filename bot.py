@@ -192,7 +192,7 @@ async def play(interaction: discord.Interaction, search: str):
         source = await YTDLSource.from_url(search, loop=bot.loop, stream=True)
     except Exception as e:
         logger.error(f"Play error: {e}")
-        return await interaction.edit_original_response(content="ماحصلت الأغنيه اللي تبيها، تأكد من الرابط أو الكلمات")
+        return await interaction.edit_original_response(content="ماحصلت الأغنيه اللي تبيها، تأكد من الرابط أو الاسم")
 
     player = bot.get_player(interaction.guild)
     await player.queue.put(source)
@@ -211,7 +211,7 @@ async def pause(interaction: discord.Interaction):
 async def resume(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
     if not vc or not vc.is_paused():
-        return await interaction.response.send_message("الأغنية مو موقوفة!")
+        return await interaction.response.send_message("الأغنية شغالة!")
     vc.resume()
     await interaction.response.send_message("رجعت أشغل الأغنية.")
 
