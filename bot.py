@@ -174,8 +174,8 @@ async def on_ready():
 @bot.tree.command(name="help", description="عرض قائمة الأوامر والمساعدة")
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="خدمة العملاء - وش تبيني أسوي لك؟",
-        description="هلا بك! أنا هنا عشان أخدمك في الصوتيات والموسيقى. هذي الأوامر اللي أقدر أسويها، خلك معاي:",
+        title="خدمة العملاء 🤵🏻‍♂️",
+        description="هلا بك! أنا هنا عشان أخدمك في الأغاني. هذي الأوامر اللي أقدر أسويها، خلك معي أستاذي:",
         color=discord.Color.green()
     )
     
