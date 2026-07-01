@@ -1,4 +1,4 @@
-# 🎵 Simon's Bot
+# 🎵 Simon FM
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![discord.py](https://img.shields.io/badge/discord.py-2.7.1-blue.svg)](https://discordpy.readthedocs.io/)
@@ -90,7 +90,7 @@ python bot.py
 ## 🌐 Links
 
 - **Website:** [simon.fhidan.com](https://fhidan.com/simon)
-- **Invite Bot:** [Add Simon's Bot to your server](https://fhidan.com/simon/invite.html)
+- **Invite Bot:** [Add Simon FM to your server](https://fhidan.com/simon/invite.html)
 - **Terms of Service:** [tos.html](https://fhidan.com/simon/tos.html)
 - **Privacy Policy:** [privacy.html](https://fhidan.com/simon/privacy.html)
 
