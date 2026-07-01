@@ -34,6 +34,9 @@ ffmpeg_options = {
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
+def is_url(string: str) -> bool:
+    return string.startswith(('http://', 'https://'))
+
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
         super().__init__(source, volume)
@@ -44,10 +47,14 @@ class YTDLSource(discord.PCMVolumeTransformer):
     @classmethod
     async def from_url(cls, url, *, loop=None, stream=False):
         loop = loop or asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+        
+        # If it's not a URL, use YouTube search
+        search_query = url if is_url(url) else f"ytsearch:{url}"
+        
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(search_query, download=not stream))
 
         if 'entries' in data:
-            # take first item from a playlist
+            # take first item from a playlist or search result
             data = data['entries'][0]
 
         filename = data['url'] if stream else ytdl.prepare_filename(data)
