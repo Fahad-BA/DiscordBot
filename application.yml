@@ -46,10 +46,17 @@ plugins:
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
+    # Use OAuth to resolve bot detection and CAPTCHA errors
+    oauth:
+      enabled: true
+    # Force language and country to US/en to avoid signature cipher errors with localized scripts
+    gl: US
+    hl: en
     clients:
       - WEB
       - MUSIC
-      - TVHTML5_SIMPLY
+      - ANDROID_TEST
+      - IOS
 
 logging:
   file:
