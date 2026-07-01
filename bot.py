@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import yt_dlp
 import os
 import asyncio
@@ -51,9 +51,15 @@ class YTDLSource(discord.PCMVolumeTransformer):
         # If it's not a URL, use YouTube search
         search_query = url if is_url(url) else f"ytsearch:{url}"
         
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(search_query, download=not stream))
+        try:
+            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(search_query, download=not stream))
+        except Exception as e:
+            logger.error(f"Error extracting info: {e}")
+            raise e
 
         if 'entries' in data:
+            if not data['entries']:
+                raise Exception("No entries found")
             # take first item from a playlist or search result
             data = data['entries'][0]
 
@@ -69,6 +75,7 @@ class MusicPlayer:
         self.current = None
         self.loop_mode = False
         self.volume = 0.5
+        self.idle_start = None
         self.bot.loop.create_task(self.player_loop())
 
     async def player_loop(self):
@@ -80,14 +87,15 @@ class MusicPlayer:
             try:
                 if not self.loop_mode or not self.current:
                     # Get the next track from the queue
-                    async with asyncio.timeout(300):  # 5 minutes timeout
+                    async with asyncio.timeout(300):  # 5 minutes timeout for queue wait
                         source = await self.queue.get()
                 else:
                     # If looping, re-create the source from the current data
                     source = await YTDLSource.from_url(self.current.data['webpage_url'], loop=self.bot.loop, stream=True)
 
             except (asyncio.TimeoutError, asyncio.CancelledError):
-                # Disconnect if inactive
+                # Disconnect if inactive for 5 minutes (no song in queue)
+                logger.info(f"Player loop timeout for guild {self.guild.id}")
                 return self.destroy(self.guild)
 
             self.current = source
@@ -107,11 +115,13 @@ class MusicBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.voice_states = True
         super().__init__(intents=intents, command_prefix="!")
         self.players = {}
 
     async def setup_hook(self) -> None:
         await self.tree.sync()
+        self.check_idle_voice.start()
 
     def get_player(self, guild):
         try:
@@ -131,73 +141,100 @@ class MusicBot(commands.Bot):
         except KeyError:
             pass
 
+    @tasks.loop(minutes=1.0)
+    async def check_idle_voice(self):
+        for guild_id, player in list(self.players.items()):
+            guild = self.get_guild(guild_id)
+            if not guild:
+                continue
+            
+            vc = guild.voice_client
+            if not vc:
+                continue
+
+            # Check if bot is alone in the channel
+            alone = len(vc.channel.members) == 1
+            # Check if nothing is playing and queue is empty
+            silent = not vc.is_playing() and player.queue.empty()
+
+            if alone or silent:
+                if player.idle_start is None:
+                    player.idle_start = asyncio.get_event_loop().time()
+                elif asyncio.get_event_loop().time() - player.idle_start >= 300: # 5 minutes
+                    logger.info(f"Disconnecting from guild {guild_id} due to inactivity.")
+                    await self.cleanup(guild)
+            else:
+                player.idle_start = None
+
 bot = MusicBot()
 
 @bot.event
 async def on_ready():
     logger.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
 
-@bot.tree.command(name="play", description="Play a song or playlist from YouTube or URL")
+@bot.tree.command(name="play", description="تشغيل مقطع أو قائمة تشغيل من يوتيوب أو رابط")
 async def play(interaction: discord.Interaction, search: str):
     await interaction.response.defer()
     
     if not interaction.user.voice:
-        return await interaction.followup.send("You must be in a voice channel!")
+        return await interaction.followup.send("لازم تكون في قناة صوتية عشان أقدر أخدمك!")
     
     vc = interaction.guild.voice_client
     if not vc:
         vc = await interaction.user.voice.channel.connect()
     
     if vc.channel != interaction.user.voice.channel:
-        return await interaction.followup.send("I am already in another voice channel!")
+        return await interaction.followup.send("أنا موجود في قناة صوتية ثانية حالياً!")
+
+    await interaction.followup.send("أبشر قاعد أبحث")
 
     try:
         source = await YTDLSource.from_url(search, loop=bot.loop, stream=True)
     except Exception as e:
-        return await interaction.followup.send(f"An error occurred: {e}")
+        logger.error(f"Play error: {e}")
+        return await interaction.edit_original_response(content="ماحصلت الأغنيه اللي تبيها، تأكد من الرابط أو الكلمات")
 
     player = bot.get_player(interaction.guild)
     await player.queue.put(source)
     
-    await interaction.followup.send(f"Added **{source.title}** to the queue.")
+    await interaction.edit_original_response(content=f"أبشر، هذاني شغلت الأغنيه: **{source.title}** وأضفتها للقائمة.")
 
-@bot.tree.command(name="pause", description="Pause the current song")
+@bot.tree.command(name="pause", description="إيقاف مؤقت للأغنية")
 async def pause(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
     if not vc or not vc.is_playing():
-        return await interaction.response.send_message("Nothing is playing!")
+        return await interaction.response.send_message("ما فيه شيء شغال حالياً!")
     vc.pause()
-    await interaction.response.send_message("Paused the music.")
+    await interaction.response.send_message("وقفت الأغنية مؤقتاً.")
 
-@bot.tree.command(name="resume", description="Resume the current song")
+@bot.tree.command(name="resume", description="استكمال تشغيل الأغنية")
 async def resume(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
     if not vc or not vc.is_paused():
-        return await interaction.response.send_message("Music is not paused!")
+        return await interaction.response.send_message("الأغنية مو موقوفة!")
     vc.resume()
-    await interaction.response.send_message("Resumed the music.")
+    await interaction.response.send_message("رجعت أشغل الأغنية.")
 
-@bot.tree.command(name="skip", description="Skip the current song")
+@bot.tree.command(name="skip", description="تخطي الأغنية الحالية")
 async def skip(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
     if not vc or not vc.is_connected():
-        return await interaction.response.send_message("I'm not connected to a voice channel.")
+        return await interaction.response.send_message("أنا مو متصل بأي قناة صوتية.")
     
     if vc.is_playing():
         vc.stop()
-        await interaction.response.send_message("Skipped the current track.")
+        await interaction.response.send_message("تم تخطي الأغنية.")
     else:
-        await interaction.response.send_message("Nothing is currently playing.")
+        await interaction.response.send_message("ما فيه شيء شغال عشان أتخطاه.")
 
-@bot.tree.command(name="stop", description="Stop the music and clear the queue")
+@bot.tree.command(name="stop", description="إيقاف الموسيقى ومسح قائمة التشغيل")
 async def stop(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
     if not vc:
-        return await interaction.response.send_message("Nothing to stop.")
+        return await interaction.response.send_message("ما فيه شيء عشان أوقفه.")
     
     if interaction.guild.id in bot.players:
         player = bot.players[interaction.guild.id]
-        # Clear the queue
         while not player.queue.empty():
             try:
                 player.queue.get_nowait()
@@ -205,47 +242,45 @@ async def stop(interaction: discord.Interaction):
                 break
     
     vc.stop()
-    await interaction.response.send_message("Stopped and cleared the queue.")
+    await interaction.response.send_message("وقفت كل شيء ومسحت القائمة.")
 
-@bot.tree.command(name="queue", description="Show the current music queue")
+@bot.tree.command(name="queue", description="عرض قائمة التشغيل الحالية")
 async def queue(interaction: discord.Interaction):
     if interaction.guild.id not in bot.players:
-        return await interaction.response.send_message("The queue is empty.")
+        return await interaction.response.send_message("القائمة فاضية.")
     
     player = bot.players[interaction.guild.id]
     if player.queue.empty() and not player.current:
-         return await interaction.response.send_message("The queue is empty.")
+         return await interaction.response.send_message("القائمة فاضية.")
 
     description = ""
     if player.current:
-        description += f"**Now Playing:** {player.current.title}\n\n"
+        description += f"**شغال حالياً:** {player.current.title}\n\n"
     
-    # We can't iterate over asyncio.Queue directly, so we look at the internal list
-    # or just show a message. For robustness, we'll show up to 10.
     queue_list = list(player.queue._queue)
     if queue_list:
-        description += "**Up Next:**\n"
+        description += "**اللي بعده:**\n"
         for i, source in enumerate(queue_list[:10], start=1):
             description += f"{i}. {source.title}\n"
     
-    embed = discord.Embed(title="Current Queue", description=description)
+    embed = discord.Embed(title="قائمة التشغيل", description=description, color=discord.Color.blue())
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="nowplaying", description="Show the currently playing song")
+@bot.tree.command(name="nowplaying", description="عرض الأغنية الشغالة حالياً")
 async def nowplaying(interaction: discord.Interaction):
     if interaction.guild.id not in bot.players or not bot.players[interaction.guild.id].current:
-        return await interaction.response.send_message("Nothing is currently playing.")
+        return await interaction.response.send_message("ما فيه شيء شغال حالياً.")
     
     player = bot.players[interaction.guild.id]
-    await interaction.response.send_message(f"Now playing: **{player.current.title}**")
+    await interaction.response.send_message(f"شغال الحين: **{player.current.title}**")
 
-@bot.tree.command(name="volume", description="Change the volume (0-100)")
+@bot.tree.command(name="volume", description="تغيير مستوى الصوت (0-100)")
 async def volume(interaction: discord.Interaction, level: int):
     vc = interaction.guild.voice_client
     if not vc:
-        return await interaction.response.send_message("Not connected to a voice channel.")
+        return await interaction.response.send_message("أنا مو متصل بقناة صوتية.")
     if not (0 <= level <= 100):
-        return await interaction.response.send_message("Volume must be between 0 and 100.")
+        return await interaction.response.send_message("مستوى الصوت لازم يكون بين 0 و 100.")
     
     vol = level / 100
     if interaction.guild.id in bot.players:
@@ -254,26 +289,26 @@ async def volume(interaction: discord.Interaction, level: int):
     if vc.source:
         vc.source.volume = vol
         
-    await interaction.response.send_message(f"Set volume to {level}%")
+    await interaction.response.send_message(f"تم تغيير مستوى الصوت إلى {level}%")
 
-@bot.tree.command(name="loop", description="Toggle loop for the current song")
+@bot.tree.command(name="loop", description="تبديل وضع التكرار للأغنية الحالية")
 async def loop(interaction: discord.Interaction):
     if interaction.guild.id not in bot.players:
-        return await interaction.response.send_message("No player found.")
+        return await interaction.response.send_message("ما لقيت مشغل موسيقى.")
     
     player = bot.players[interaction.guild.id]
     player.loop_mode = not player.loop_mode
-    status = "enabled" if player.loop_mode else "disabled"
-    await interaction.response.send_message(f"Loop {status}.")
+    status = "مفعل" if player.loop_mode else "معطل"
+    await interaction.response.send_message(f"وضع التكرار الآن: {status}.")
 
-@bot.tree.command(name="shuffle", description="Shuffle the queue")
+@bot.tree.command(name="shuffle", description="تبديل ترتيب القائمة عشوائياً")
 async def shuffle(interaction: discord.Interaction):
     if interaction.guild.id not in bot.players:
-        return await interaction.response.send_message("Queue is empty.")
+        return await interaction.response.send_message("القائمة فاضية.")
     
     player = bot.players[interaction.guild.id]
     if player.queue.empty():
-        return await interaction.response.send_message("Queue is empty.")
+        return await interaction.response.send_message("القائمة فاضية.")
     
     import random
     queue_list = list(player.queue._queue)
@@ -282,19 +317,19 @@ async def shuffle(interaction: discord.Interaction):
     for item in queue_list:
         player.queue.put_nowait(item)
         
-    await interaction.response.send_message("Shuffled the queue.")
+    await interaction.response.send_message("تم ترتيب القائمة عشوائياً.")
 
-@bot.tree.command(name="disconnect", description="Disconnect the bot from voice")
+@bot.tree.command(name="disconnect", description="فصل البوت من القناة الصوتية")
 async def disconnect(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
     if not vc:
-        return await interaction.response.send_message("Not connected.")
+        return await interaction.response.send_message("أنا مو متصل أصلاً.")
     
     if interaction.guild.id in bot.players:
         del bot.players[interaction.guild.id]
         
     await vc.disconnect()
-    await interaction.response.send_message("Disconnected.")
+    await interaction.response.send_message("تم الفصل، في أمان الله.")
 
 if __name__ == "__main__":
     bot.run(os.getenv('DISCORD_TOKEN'))
