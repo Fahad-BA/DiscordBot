@@ -52,7 +52,6 @@ class YTDLSource(discord.PCMVolumeTransformer):
         search_query = url if is_url(url) else f"ytsearch:{url}"
         
         try:
-            # Setting process=True to ensure we get the actual video data for URLs
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(search_query, download=not stream))
         except Exception as e:
             logger.error(f"Error extracting info: {e}")
@@ -153,9 +152,8 @@ class MusicBot(commands.Bot):
             if not vc:
                 continue
 
-            # Check if bot is alone in the channel
+            # Check if bot is alone in the channel OR nothing is playing and queue is empty
             alone = len(vc.channel.members) == 1
-            # Check if nothing is playing and queue is empty
             silent = not vc.is_playing() and player.queue.empty()
 
             if alone or silent:
@@ -216,7 +214,6 @@ async def play(interaction: discord.Interaction, search: str):
     if vc.channel != interaction.user.voice.channel:
         return await interaction.followup.send("أنا موجود في قناة صوتية ثانية حالياً!")
 
-    # Fix: Correct logic for URL vs Search message
     if is_url(search):
         await interaction.followup.send("أبشر، قاعد أجهز الرابط اللي أرسلته...")
     else:
