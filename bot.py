@@ -52,6 +52,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         search_query = url if is_url(url) else f"ytsearch:{url}"
         
         try:
+            # Setting process=True to ensure we get the actual video data for URLs
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(search_query, download=not stream))
         except Exception as e:
             logger.error(f"Error extracting info: {e}")
@@ -60,7 +61,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         if 'entries' in data:
             if not data['entries']:
                 raise Exception("No entries found")
-            # take first item from a playlist or search result
+            # take first item from a search result
             data = data['entries'][0]
 
         filename = data['url'] if stream else ytdl.prepare_filename(data)
@@ -172,6 +173,35 @@ bot = MusicBot()
 async def on_ready():
     logger.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
 
+@bot.tree.command(name="help", description="عرض قائمة الأوامر والمساعدة")
+async def help_command(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="خدمة العملاء - وش تبيني أسوي لك؟",
+        description="هلا بك! أنا هنا عشان أخدمك في الصوتيات والموسيقى. هذي الأوامر اللي أقدر أسويها، خلك معاي:",
+        color=discord.Color.green()
+    )
+    
+    commands_list = [
+        ("`/play [رابط أو اسم]`", "تشغل لك اللي تبي، حط رابط المقطع أو بس اسمه وبجيبه لك."),
+        ("`/pause`", "توقف المقطع اللي شغال حالياً شوي."),
+        ("`/resume`", "تكمل تشغيل المقطع اللي وقفناه."),
+        ("`/skip`", "تتعدى المقطع اللي شغال الحين ونروح للي بعده."),
+        ("`/stop`", "توقف كل شيء وتمسح قائمة التشغيل، وتقلبها هدوء."),
+        ("`/queue`", "توريك وش الأغاني اللي محترية دورها في القائمة."),
+        ("`/nowplaying`", "تعلمك وش المقطع اللي قاعدين نسمعه الحين."),
+        ("`/volume [0-100]`", "تغير قوة الصوت، اختر رقم من صفر لمية."),
+        ("`/loop`", "تكرر المقطع الحالي عشان ما يخلص ونعيد فيه."),
+        ("`/shuffle`", "تخربط ترتيب القائمة.. خلك عشوائي اليوم!"),
+        ("`/disconnect`", "تطردني من الروم.. الله يسامحك، في أمان الله!"),
+        ("`/help`", "تطلع لك هذي القائمة عشان ما تضيع وسط الأوامر.")
+    ]
+    
+    for name, value in commands_list:
+        embed.add_field(name=name, value=value, inline=False)
+    
+    embed.set_footer(text="تبشر بالسعد، لو احتجت شيء ثاني لا يردك إلا لسانك!")
+    await interaction.response.send_message(embed=embed)
+
 @bot.tree.command(name="play", description="تشغيل مقطع أو قائمة تشغيل من يوتيوب أو رابط")
 async def play(interaction: discord.Interaction, search: str):
     await interaction.response.defer()
@@ -186,18 +216,22 @@ async def play(interaction: discord.Interaction, search: str):
     if vc.channel != interaction.user.voice.channel:
         return await interaction.followup.send("أنا موجود في قناة صوتية ثانية حالياً!")
 
-    await interaction.followup.send("أبشر قاعد أبحث")
+    # Fix: Correct logic for URL vs Search message
+    if is_url(search):
+        await interaction.followup.send("أبشر، قاعد أجهز الرابط اللي أرسلته...")
+    else:
+        await interaction.followup.send("أبشر، قاعد أبحث عن طلبك...")
 
     try:
         source = await YTDLSource.from_url(search, loop=bot.loop, stream=True)
     except Exception as e:
         logger.error(f"Play error: {e}")
-        return await interaction.edit_original_response(content="ماحصلت الأغنيه اللي تبيها، تأكد من الرابط أو الاسم")
+        return await interaction.edit_original_response(content="ما حصلت اللي تبي، تأكد من الرابط أو الكلمات اللي كتبتها.")
 
     player = bot.get_player(interaction.guild)
     await player.queue.put(source)
     
-    await interaction.edit_original_response(content=f"أبشر، هذاني شغلت الأغنيه: **{source.title}** وأضفتها للقائمة.")
+    await interaction.edit_original_response(content=f"أبشر، شغلت: **{source.title}** وأضفتها للقائمة.")
 
 @bot.tree.command(name="pause", description="إيقاف مؤقت للأغنية")
 async def pause(interaction: discord.Interaction):
@@ -205,15 +239,15 @@ async def pause(interaction: discord.Interaction):
     if not vc or not vc.is_playing():
         return await interaction.response.send_message("ما فيه شيء شغال حالياً!")
     vc.pause()
-    await interaction.response.send_message("وقفت الأغنية مؤقتاً.")
+    await interaction.response.send_message("وقفت المقطع مؤقتاً.")
 
 @bot.tree.command(name="resume", description="استكمال تشغيل الأغنية")
 async def resume(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
     if not vc or not vc.is_paused():
-        return await interaction.response.send_message("الأغنية شغالة!")
+        return await interaction.response.send_message("المقطع مو موقوف!")
     vc.resume()
-    await interaction.response.send_message("رجعت أشغل الأغنية.")
+    await interaction.response.send_message("رجعت أشغل المقطع.")
 
 @bot.tree.command(name="skip", description="تخطي الأغنية الحالية")
 async def skip(interaction: discord.Interaction):
@@ -223,7 +257,7 @@ async def skip(interaction: discord.Interaction):
     
     if vc.is_playing():
         vc.stop()
-        await interaction.response.send_message("تم تخطي الأغنية.")
+        await interaction.response.send_message("تم تخطي المقطع.")
     else:
         await interaction.response.send_message("ما فيه شيء شغال عشان أتخطاه.")
 
@@ -231,7 +265,7 @@ async def skip(interaction: discord.Interaction):
 async def stop(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
     if not vc:
-        return await interaction.response.send_message("ما فيه شيء عشان أوقفه.")
+        return await interaction.response.send_message("ما فيه شيء شغال حالياً.")
     
     if interaction.guild.id in bot.players:
         player = bot.players[interaction.guild.id]
@@ -242,37 +276,37 @@ async def stop(interaction: discord.Interaction):
                 break
     
     vc.stop()
-    await interaction.response.send_message("وقفت كل شيء ومسحت القائمة.")
+    await interaction.response.send_message("وقفت كل شيء ومسحت القائمة.. هدوووووء!")
 
 @bot.tree.command(name="queue", description="عرض قائمة التشغيل الحالية")
 async def queue(interaction: discord.Interaction):
     if interaction.guild.id not in bot.players:
-        return await interaction.response.send_message("القائمة فاضية.")
+        return await interaction.response.send_message("القائمة فاضية، ما فيها شيء.")
     
     player = bot.players[interaction.guild.id]
     if player.queue.empty() and not player.current:
-         return await interaction.response.send_message("القائمة فاضية.")
+         return await interaction.response.send_message("القائمة فاضية، ما فيها شيء.")
 
     description = ""
     if player.current:
-        description += f"**شغال حالياً:** {player.current.title}\n\n"
+        description += f"**اللي شغال الحين:** {player.current.title}\n\n"
     
     queue_list = list(player.queue._queue)
     if queue_list:
-        description += "**اللي بعده:**\n"
+        description += "**القائمة القادمة:**\n"
         for i, source in enumerate(queue_list[:10], start=1):
             description += f"{i}. {source.title}\n"
     
-    embed = discord.Embed(title="قائمة التشغيل", description=description, color=discord.Color.blue())
+    embed = discord.Embed(title="قائمة المقاطع", description=description, color=discord.Color.blue())
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="nowplaying", description="عرض الأغنية الشغالة حالياً")
 async def nowplaying(interaction: discord.Interaction):
     if interaction.guild.id not in bot.players or not bot.players[interaction.guild.id].current:
-        return await interaction.response.send_message("ما فيه شيء شغال حالياً.")
+        return await interaction.response.send_message("ما فيه شيء شغال الحين.")
     
     player = bot.players[interaction.guild.id]
-    await interaction.response.send_message(f"شغال الحين: **{player.current.title}**")
+    await interaction.response.send_message(f"نسمع الحين: **{player.current.title}**")
 
 @bot.tree.command(name="volume", description="تغيير مستوى الصوت (0-100)")
 async def volume(interaction: discord.Interaction, level: int):
@@ -289,17 +323,17 @@ async def volume(interaction: discord.Interaction, level: int):
     if vc.source:
         vc.source.volume = vol
         
-    await interaction.response.send_message(f"تم تغيير مستوى الصوت إلى {level}%")
+    await interaction.response.send_message(f"غيرت مستوى الصوت لعيونك وصار: {level}%")
 
 @bot.tree.command(name="loop", description="تبديل وضع التكرار للأغنية الحالية")
 async def loop(interaction: discord.Interaction):
     if interaction.guild.id not in bot.players:
-        return await interaction.response.send_message("ما لقيت مشغل موسيقى.")
+        return await interaction.response.send_message("ما فيه مشغل شغال حالياً.")
     
     player = bot.players[interaction.guild.id]
     player.loop_mode = not player.loop_mode
     status = "مفعل" if player.loop_mode else "معطل"
-    await interaction.response.send_message(f"وضع التكرار الآن: {status}.")
+    await interaction.response.send_message(f"وضع التكرار الحين: {status}.")
 
 @bot.tree.command(name="shuffle", description="تبديل ترتيب القائمة عشوائياً")
 async def shuffle(interaction: discord.Interaction):
@@ -317,19 +351,19 @@ async def shuffle(interaction: discord.Interaction):
     for item in queue_list:
         player.queue.put_nowait(item)
         
-    await interaction.response.send_message("تم ترتيب القائمة عشوائياً.")
+    await interaction.response.send_message("خربطت لك القائمة.. خلك عشوائي!")
 
 @bot.tree.command(name="disconnect", description="فصل البوت من القناة الصوتية")
 async def disconnect(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
     if not vc:
-        return await interaction.response.send_message("أنا مو متصل أصلاً.")
+        return await interaction.response.send_message("أنا برا الروم أصلاً!")
     
     if interaction.guild.id in bot.players:
         del bot.players[interaction.guild.id]
         
     await vc.disconnect()
-    await interaction.response.send_message("تم الفصل، في أمان الله.")
+    await interaction.response.send_message("تم الفصل، فمان الله.")
 
 if __name__ == "__main__":
     bot.run(os.getenv('DISCORD_TOKEN'))
