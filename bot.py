@@ -170,7 +170,7 @@ bot = MusicBot()
 @bot.event
 async def on_ready():
     logger.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
-    await bot.change_presence(activity=discord.Streaming(name="fhidan.com/simon", url="https://fhidan.com/simon"))
+    await bot.change_presence(activity=discord.Streaming(name="Playing Nawal!", url="https://fhidan.com/simon"))
 
 @bot.tree.command(name="help", description="عرض قائمة الأوامر والمساعدة")
 async def help_command(interaction: discord.Interaction):

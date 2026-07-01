@@ -14,10 +14,10 @@ Simon's Bot isn't just another music bot — it's your server's dedicated DJ, de
 
 ### 🔗 Links
 
-- **Website:** [fhidan.com/simon](https://fhidan.com/simon)
-- **Invite:** [Add Simon's Bot to your server](https://discord.com/oauth2/authorize?client_id=1521910312973107333&permissions=8&integration_type=0&scope=bot+applications.commands)
-- **Terms of Service:** [fhidan.com/simon/tos.html](https://fhidan.com/simon/tos.html)
-- **Privacy Policy:** [fhidan.com/simon/privacy.html](https://fhidan.com/simon/privacy.html)
+- **[Website](https://fhidan.com/simon)** 
+- **[Invite](https://discord.com/oauth2/authorize?client_id=1521910312973107333&permissions=8&integration_type=0&scope=bot+applications.commands)**
+- **[Terms of Service](https://fhidan.com/simon/tos.html)**
+- **[Privacy Policy](https://fhidan.com/simon/privacy.html)**
 
 ---
 💎 *Fast. Reliable. Free.*
