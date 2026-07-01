@@ -20,7 +20,7 @@ class MusicBot(commands.Bot):
         super().__init__(intents=intents, command_prefix="!")
 
     async def setup_hook(self) -> None:
-        nodes = [wavelink.Node(uri=f"http://{os.getenv('LAVALINK_HOST')}:{os.getenv('LAVALINK_PORT')}", password=os.getenv('LAVALINK_PASSWORD'))]
+        nodes = [wavelink.Node(uri=f"http://{os.getenv('LAVALINK_HOST')}:{os.getenv('LAVALINK_PORT')}", password='youshallnotpass')]
         await wavelink.Pool.connect(nodes=nodes, client=self, cache_capacity=100)
         await self.tree.sync()
 
