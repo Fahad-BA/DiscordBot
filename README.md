@@ -90,7 +90,7 @@ python bot.py
 ## 🌐 Links
 
 - **Website:** [simon.fhidan.com](https://fhidan.com/simon)
-- **Invite Bot:** [Add Simon's Bot to your server](https://discord.com/oauth2/authorize?client_id=1521910312973107333&permissions=8&integration_type=0&scope=bot+applications.commands)
+- **Invite Bot:** [Add Simon's Bot to your server](https://fhidan.com/simon/invite.html)
 - **Terms of Service:** [tos.html](https://fhidan.com/simon/tos.html)
 - **Privacy Policy:** [privacy.html](https://fhidan.com/simon/privacy.html)
 
