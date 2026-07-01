@@ -4,7 +4,12 @@ from discord import app_commands
 import wavelink
 import os
 import asyncio
+import logging
 from dotenv import load_dotenv
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -23,9 +28,50 @@ bot = MusicBot()
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user} (ID: {bot.user.id})')
+    logger.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
 
-@bot.tree.command(name="play", description="Play a song from YouTube or URL")
+@bot.event
+async def on_wavelink_node_ready(payload: wavelink.NodeReadyEventPayload):
+    logger.info(f"Wavelink Node {payload.node.identifier} is ready!")
+
+@bot.event
+async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
+    player: wavelink.Player = payload.player
+    if not player:
+        return
+    
+    track: wavelink.Playable = payload.track
+    logger.info(f"Started playing: {track.title}")
+
+@bot.event
+async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
+    player: wavelink.Player = payload.player
+    if not player:
+        return
+
+    # If the queue is not empty, play the next song
+    if not player.queue.is_empty:
+        next_track = player.queue.get()
+        await player.play(next_track)
+        logger.info(f"Finished playing, moving to next track: {next_track.title}")
+    else:
+        logger.info("Finished playing, queue is empty.")
+
+@bot.event
+async def on_wavelink_track_exception(payload: wavelink.TrackExceptionEventPayload):
+    logger.error(f"Track exception occurred: {payload.exception}")
+    player: wavelink.Player = payload.player
+    if not player.queue.is_empty:
+        await player.play(player.queue.get())
+
+@bot.event
+async def on_wavelink_track_stuck(payload: wavelink.TrackStuckEventPayload):
+    logger.warning(f"Track stuck: {payload.track.title} at {payload.threshold}ms")
+    player: wavelink.Player = payload.player
+    if not player.queue.is_empty:
+        await player.play(player.queue.get())
+
+@bot.tree.command(name="play", description="Play a song or playlist from YouTube or URL")
 async def play(interaction: discord.Interaction, search: str):
     await interaction.response.defer()
     
@@ -37,18 +83,26 @@ async def play(interaction: discord.Interaction, search: str):
     if vc.channel != interaction.user.voice.channel:
         return await interaction.followup.send("I am already in another voice channel!")
 
-    tracks = await wavelink.Playable.search(search)
-    if not tracks:
-        return await interaction.followup.send("No results found.")
+    # Set default volume if it's a new connection or at default 100
+    if vc.volume == 100:
+        await vc.set_volume(50)
 
-    track = tracks[0]
-    await vc.queue.put_wait(track)
-    
+    # Robust search logic
+    tracks: wavelink.Search = await wavelink.Playable.search(search)
+    if not tracks:
+        return await interaction.followup.send(f"No results found for: `{search}`")
+
+    if isinstance(tracks, wavelink.Playlist):
+        # Add all tracks in playlist
+        added = await vc.queue.put_wait(tracks)
+        await interaction.followup.send(f"Added playlist **{tracks.name}** ({added} tracks) to the queue.")
+    else:
+        track: wavelink.Playable = tracks[0]
+        await vc.queue.put_wait(track)
+        await interaction.followup.send(f"Added **{track.title}** to the queue.")
+
     if not vc.playing:
         await vc.play(vc.queue.get())
-        await interaction.followup.send(f"Playing **{track.title}**")
-    else:
-        await interaction.followup.send(f"Added **{track.title}** to the queue")
 
 @bot.tree.command(name="pause", description="Pause the current song")
 async def pause(interaction: discord.Interaction):
