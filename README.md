@@ -11,6 +11,7 @@ A high-performance Discord music bot built for simplicity. Uses native direct st
 
 ## ✨ Features
 
+- **🇸🇦 Saudi Najdi Arabic Personality** — All commands and responses are in fluent Saudi Najdi Arabic (اللهجة النجدية). The bot talks like a local, not a machine.
 - **🚀 Native Direct Streaming** — Near-instant playback using `stream=True` with FFmpeg. Zero disk writes.
 - **📋 Full Queue Management** — Play, pause, resume, skip, stop, shuffle, loop, and view the queue.
 - **🔊 Volume Control** — Adjust playback volume per server (0–100%).
@@ -89,7 +90,7 @@ python bot.py
 
 ## 🌐 Links
 
-- **Website:** [simon.fhidan.com](https://fhidan.com/simon)
+- **Website:** [fhidan.com/simon](https://fhidan.com/simon)
 - **Invite Bot:** [Add Simon FM to your server](https://fhidan.com/simon/invite.html)
 - **Terms of Service:** [tos.html](https://fhidan.com/simon/tos.html)
 - **Privacy Policy:** [privacy.html](https://fhidan.com/simon/privacy.html)
