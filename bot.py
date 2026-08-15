@@ -56,6 +56,7 @@ class StreamAudioSource(discord.AudioSource):
 
     def __init__(self, ytdlp_proc):
         self.ytdlp = ytdlp_proc
+        self.stderr_log = open('/tmp/discordbot-audio.log', 'ab', buffering=0)
         self.ffmpeg = subprocess.Popen(
             [
                 'ffmpeg',
@@ -67,7 +68,7 @@ class StreamAudioSource(discord.AudioSource):
             ],
             stdin=self.ytdlp.stdout,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=self.stderr_log,
         )
 
     def read(self):
@@ -96,6 +97,10 @@ class StreamAudioSource(discord.AudioSource):
                 p.wait(timeout=2)
             except Exception:
                 pass
+        try:
+            self.stderr_log.close()
+        except Exception:
+            pass
 
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5, proc=None):
@@ -152,7 +157,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
                 webpage_url,
             ],
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=open('/tmp/discordbot-audio.log', 'ab', buffering=0),
         )
 
         # discord.py's FFmpegPCMAudio can't take stdin, so pipe yt-dlp stdout
@@ -167,6 +172,7 @@ class MusicPlayer:
         self.queue = asyncio.Queue()
         self.next = asyncio.Event()
         self.current = None
+        self.last_data = None  # metadata of last played track, used by loop mode
         self.loop_mode = False
         self.volume = 0.5
         self.idle_start = None
@@ -179,28 +185,45 @@ class MusicPlayer:
             self.next.clear()
 
             try:
-                if not self.loop_mode or not self.current:
+                if not self.loop_mode or not self.last_data:
                     # Get the next track from the queue
                     async with asyncio.timeout(300):  # 5 minutes timeout for queue wait
                         source = await self.queue.get()
                 else:
-                    # If looping, re-create the source from the current data
-                    source = await YTDLSource.from_url(self.current.data['webpage_url'], loop=self.bot.loop, stream=True)
+                    # If looping, re-create the source from the last played track
+                    source = await YTDLSource.from_url(self.last_data['webpage_url'], loop=self.bot.loop, stream=True)
 
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 # Disconnect if inactive for 5 minutes (no song in queue)
                 logger.info(f"Player loop timeout for guild {self.guild.id}")
                 return self.destroy(self.guild)
+            except Exception as e:
+                # A failed source must never kill the player_loop task
+                logger.error(f"Error preparing next track: {e}")
+                continue
 
             self.current = source
-            if self.guild.voice_client:
-                self.guild.voice_client.play(source, after=lambda _: self.bot.loop.call_soon_threadsafe(self.next.set))
-                source.volume = self.volume
+            def _after(err):
+                if err:
+                    logger.error(f"Playback error: {err}")
+                self.bot.loop.call_soon_threadsafe(self.next.set)
+            try:
+                if self.guild.voice_client:
+                    self.guild.voice_client.play(source, after=_after)
+                    source.volume = self.volume
+                    logger.info(f"Now playing: {getattr(source, 'title', '?')}")
+                else:
+                    logger.warning("player_loop: no voice client, dropping track")
+                    self.next.set()
+            except Exception as e:
+                logger.error(f"vc.play failed: {e}")
+                self.next.set()
             
             await self.next.wait()
 
             # Clean up the current player and its yt-dlp subprocess/pipe
             if self.current:
+                self.last_data = self.current.data
                 self.current.cleanup_proc()
             self.current = None
 
@@ -363,6 +386,7 @@ async def stop(interaction: discord.Interaction):
     
     if interaction.guild.id in bot.players:
         player = bot.players[interaction.guild.id]
+        player.loop_mode = False  # stop also disables loop
         while not player.queue.empty():
             try:
                 item = player.queue.get_nowait()
@@ -429,6 +453,7 @@ async def loop(interaction: discord.Interaction):
     player = bot.players[interaction.guild.id]
     player.loop_mode = not player.loop_mode
     status = "مفعل" if player.loop_mode else "معطل"
+    logger.info(f"/loop by {interaction.user}: {status} (guild {interaction.guild.id})")
     await interaction.response.send_message(f"وضع التكرار الحين: {status}.")
 
 @bot.tree.command(name="shuffle", description="تبديل ترتيب القائمة عشوائياً")
@@ -446,8 +471,9 @@ async def shuffle(interaction: discord.Interaction):
     player.queue._queue.clear()
     for item in queue_list:
         player.queue.put_nowait(item)
+    logger.info(f"/shuffle by {interaction.user}: reordered {len(queue_list)} tracks (guild {interaction.guild.id})")
         
-    await interaction.response.send_message("خربطت لك القائمة.. خلك عشوائي!")
+    await interaction.response.send_message(f"خربطت لك القائمة ({len(queue_list)} أغنية).. خلك عشوائي!")
 
 @bot.tree.command(name="disconnect", description="فصل البوت من القناة الصوتية")
 async def disconnect(interaction: discord.Interaction):
