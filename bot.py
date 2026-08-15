@@ -2,6 +2,9 @@ import discord
 from discord.ext import commands, tasks
 import yt_dlp
 import os
+import sys
+import shutil
+import subprocess
 import asyncio
 import logging
 from dotenv import load_dotenv
@@ -27,32 +30,103 @@ ytdl_format_options = {
     'source_address': '0.0.0.0',  # bind to ipv4 since ipv6 addresses cause issues sometimes
 }
 
+# ffmpeg now reads from a pipe (yt-dlp subprocess stdout), so no reconnect/user-agent
+# headers are needed here - yt-dlp handles the HTTP fetching and its own client headers.
 ffmpeg_options = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'before_options': '-analyzeduration 0 -loglevel warning',
     'options': '-vn',
 }
+
+# Resolve the yt-dlp binary shipped inside this bot's venv
+YTDLP_BIN = os.path.join(os.path.dirname(sys.executable), 'yt-dlp')
+if not os.path.exists(YTDLP_BIN):
+    YTDLP_BIN = shutil.which('yt-dlp') or 'yt-dlp'
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
 def is_url(string: str) -> bool:
     return string.startswith(('http://', 'https://'))
 
+class StreamAudioSource(discord.AudioSource):
+    """Raw PCM audio source: yt-dlp stdout -> ffmpeg -> s16le 48kHz stereo pipe.
+
+    discord.py's FFmpegPCMAudio does not accept a stdin kwarg, so we drive
+    the ffmpeg subprocess ourselves and feed PCM frames to the voice client.
+    """
+
+    def __init__(self, ytdlp_proc):
+        self.ytdlp = ytdlp_proc
+        self.ffmpeg = subprocess.Popen(
+            [
+                'ffmpeg',
+                '-analyzeduration', '0', '-loglevel', 'warning', '-vn',
+                '-i', 'pipe:0',
+                '-f', 's16le', '-ac', '2', '-ar', '48000',
+                '-acodec', 'pcm_s16le',
+                'pipe:1',
+            ],
+            stdin=self.ytdlp.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def read(self):
+        # 20ms frame: 48kHz * 2ch * 2bytes * 0.02s = 3840 bytes
+        return self.ffmpeg.stdout.read(3840)
+
+    def is_opus(self):
+        return False
+
+    def cleanup(self):
+        try:
+            self.ffmpeg.kill()
+        except Exception:
+            pass
+        try:
+            self.ytdlp.terminate()
+        except Exception:
+            pass
+        for p in (self.ffmpeg, self.ytdlp):
+            try:
+                if p.stdout:
+                    p.stdout.close()
+            except Exception:
+                pass
+            try:
+                p.wait(timeout=2)
+            except Exception:
+                pass
+
 class YTDLSource(discord.PCMVolumeTransformer):
-    def __init__(self, source, *, data, volume=0.5):
+    def __init__(self, source, *, data, volume=0.5, proc=None):
         super().__init__(source, volume)
         self.data = data
         self.title = data.get('title')
-        self.url = data.get('url')
+        self.url = data.get('webpage_url') or data.get('url')
+        self.proc = proc  # yt-dlp subprocess feeding ffmpeg's stdin
+
+    def cleanup_proc(self):
+        """Kill the ffmpeg/yt-dlp subprocesses and close pipes when playback ends."""
+        if self.proc is None:
+            return
+        try:
+            # StreamAudioSource.cleanup() kills ffmpeg, terminates yt-dlp
+            # and closes both pipes.
+            self.original.cleanup()
+        except Exception:
+            pass
+        self.proc = None
 
     @classmethod
     async def from_url(cls, url, *, loop=None, stream=False):
         loop = loop or asyncio.get_event_loop()
-        
+
         # If it's not a URL, use YouTube search
         search_query = url if is_url(url) else f"ytsearch:{url}"
-        
+
         try:
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(search_query, download=not stream))
+            # Metadata only: resolve title/webpage_url without downloading the media
+            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(search_query, download=False))
         except Exception as e:
             logger.error(f"Error extracting info: {e}")
             raise e
@@ -63,8 +137,28 @@ class YTDLSource(discord.PCMVolumeTransformer):
             # take first item from a search result
             data = data['entries'][0]
 
-        filename = data['url'] if stream else ytdl.prepare_filename(data)
-        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+        webpage_url = data.get('webpage_url') or data.get('url') or url
+
+        # Structural fix: let yt-dlp itself download the audio and pipe it to
+        # ffmpeg's stdin, instead of ffmpeg fetching the googlevideo URL
+        # directly (which gets 403 because of YouTube's URL binding).
+        proc = subprocess.Popen(
+            [
+                YTDLP_BIN,
+                '-f', 'bestaudio/best',
+                '-o', '-',
+                '--no-warnings', '--quiet', '--no-progress', '--no-part',
+                '--no-playlist', '--no-check-certificates',
+                webpage_url,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+        # discord.py's FFmpegPCMAudio can't take stdin, so pipe yt-dlp stdout
+        # into our own ffmpeg subprocess via StreamAudioSource.
+        audio = StreamAudioSource(proc)
+        return cls(audio, data=data, proc=proc)
 
 class MusicPlayer:
     def __init__(self, bot, guild):
@@ -105,7 +199,9 @@ class MusicPlayer:
             
             await self.next.wait()
 
-            # Clean up the current player
+            # Clean up the current player and its yt-dlp subprocess/pipe
+            if self.current:
+                self.current.cleanup_proc()
             self.current = None
 
     def destroy(self, guild):
@@ -269,7 +365,9 @@ async def stop(interaction: discord.Interaction):
         player = bot.players[interaction.guild.id]
         while not player.queue.empty():
             try:
-                player.queue.get_nowait()
+                item = player.queue.get_nowait()
+                if isinstance(item, YTDLSource):
+                    item.cleanup_proc()
             except asyncio.QueueEmpty:
                 break
     
@@ -358,6 +456,17 @@ async def disconnect(interaction: discord.Interaction):
         return await interaction.response.send_message("أنا برا الروم أصلاً!")
     
     if interaction.guild.id in bot.players:
+        player = bot.players[interaction.guild.id]
+        # Kill any queued/pending yt-dlp subprocesses before dropping the player
+        while not player.queue.empty():
+            try:
+                item = player.queue.get_nowait()
+                if isinstance(item, YTDLSource):
+                    item.cleanup_proc()
+            except asyncio.QueueEmpty:
+                break
+        if player.current:
+            player.current.cleanup_proc()
         del bot.players[interaction.guild.id]
         
     await vc.disconnect()
