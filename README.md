@@ -12,7 +12,7 @@ A high-performance Discord music bot built for simplicity. Uses native direct st
 ## ✨ Features
 
 - **🇸🇦 Saudi Najdi Arabic Personality** — All commands and responses are in fluent Saudi Najdi Arabic (اللهجة النجدية). The bot talks like a local, not a machine.
-- **🚀 Native Direct Streaming** — Near-instant playback using `stream=True` with FFmpeg. Zero disk writes.
+- **🚀 Native Direct Streaming** — Near-instant playback: a `yt-dlp` subprocess pipes audio straight into FFmpeg (no `FFmpegPCMAudio`, no stale URL 403s). Zero disk writes.
 - **📋 Full Queue Management** — Play, pause, resume, skip, stop, shuffle, loop, and view the queue.
 - **🔊 Volume Control** — Adjust playback volume per server (0–100%).
 - **🔋 Smart Idle Detection** — Automatically disconnects after 5 minutes of inactivity to save resources.
